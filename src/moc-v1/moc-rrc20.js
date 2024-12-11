@@ -1,402 +1,384 @@
+import { ethers } from 'ethers'
 import BigNumber from 'bignumber.js'
-import Web3 from 'web3'
 
 import { toContractPrecision, BUCKET_X2 } from '../utils.js'
-import { sendTransaction } from '../transaction.js'
 import { addCommissions, calcMintInterest } from './moc-base.js'
 import { statusFromContracts, userBalanceFromContracts } from './contracts.js'
 
-const AllowanceUseReserveToken = async (web3, dContracts, allow, configProject) => {
-  // Ensure is in correct app mode
+// Updated sendTransaction function for Ethers.js
+const sendTransaction = async (contractMethod, overrides = {}) => {
+  try {
+    const txResponse = await contractMethod(overrides)
+    console.log(`Transaction submitted: ${txResponse.hash}`)
+    const receipt = await txResponse.wait()
+    console.log(`Transaction confirmed: ${receipt.transactionHash}`)
+
+    // Extract filtered events if necessary
+    const filteredEvents = receipt.events?.filter(event => event.event) || []
+
+    return { receipt, filteredEvents }
+  } catch (error) {
+    console.error('Transaction failed:', error)
+    throw error
+  }
+}
+
+// AllowanceUseReserveToken Function
+const AllowanceUseReserveToken = async (dContracts, allow, configProject) => {
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
   const reservetoken = dContracts.contracts.reservetoken
+  const mocAddress = dContracts.contracts.moc.address
 
-  let amountAllowance = '0'
-  const valueToSend = null
+  let amountAllowance = ethers.constants.Zero
   if (allow) {
-    amountAllowance = Number.MAX_SAFE_INTEGER.toString()
+    amountAllowance = ethers.constants.MaxUint256
   }
 
-  // Calculate estimate gas cost
-  const estimateGas = await reservetoken.methods
-    .approve(dContracts.contracts.moc._address, web3.utils.toWei(amountAllowance))
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Approve transaction
+  const approveTx = reservetoken.approve(mocAddress, amountAllowance)
 
-  // encode function
-  const encodedCall = reservetoken.methods
-    .approve(dContracts.contracts.moc._address, web3.utils.toWei(amountAllowance))
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, reservetoken._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(approveTx, {
+    from: userAddress,
+    gasLimit: 100000 // You can adjust the gas limit as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const mintTPRRC20 = async (web3, dContracts, configProject, tpAmount) => {
+// mintTPRRC20 Function
+const mintTPRRC20 = async (dContracts, configProject, tpAmount) => {
   // Mint pegged token with collateral RRC20
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
-  const mintSlippage = `${process.env.MINT_SLIPPAGE}`
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
+  const mintSlippage = new BigNumber(process.env.MINT_SLIPPAGE)
 
-  // Ensure is in correct app mode
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
-  // get reserve price from contract
-  const reservePrice = new BigNumber(Web3.utils.fromWei(dataContractStatus.bitcoinPrice))
+  // Get reserve price from contract
+  const reservePrice = new BigNumber(ethers.utils.formatEther(dataContractStatus.bitcoinPrice))
 
   // Pegged amount in reserve
   const reserveAmount = new BigNumber(tpAmount).div(reservePrice)
 
-  let valueToSend = await addCommissions(web3, dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'STABLE', 'MINT')
+  // Add commissions
+  let valueToSend = await addCommissions(dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'STABLE', 'MINT')
 
   // Add Slippage plus %
-  const mintSlippageAmount = new BigNumber(mintSlippage).div(100).times(reserveAmount)
-
+  const mintSlippageAmount = mintSlippage.div(100).times(reserveAmount)
   valueToSend = new BigNumber(valueToSend).plus(mintSlippageAmount)
 
-  console.log(`Mint Slippage using ${mintSlippage} %. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
+  console.log(`Mint Slippage using ${mintSlippage}%. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
 
   // Verifications
 
-  // User have sufficient reserve to pay?
+  // User has sufficient reserve to pay
   console.log(`To mint ${tpAmount} ${configProject.tokens.TP.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your balance`)
-  const userReserveBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.rbtcBalance))
+  const userReserveBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.rbtcBalance))
   if (valueToSend.gt(userReserveBalance)) throw new Error(`Insufficient ${configProject.tokens.RESERVE.name} balance`)
 
   // Allowance
   console.log(`Allowance: To mint ${tpAmount} ${configProject.tokens.TP.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your spendable balance`)
-  const userSpendableBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.reserveAllowance))
+  const userSpendableBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.reserveAllowance))
   if (valueToSend.gt(userSpendableBalance)) throw new Error('Insufficient spendable balance... please make an allowance to the MoC contract')
 
-  // There are sufficient PEGGED in the contracts to mint?
-  const tpAvailableToMint = new BigNumber(Web3.utils.fromWei(dataContractStatus.docAvailableToMint))
+  // Sufficient PEGGED in the contracts to mint
+  const tpAvailableToMint = new BigNumber(ethers.utils.formatEther(dataContractStatus.docAvailableToMint))
   if (new BigNumber(tpAmount).gt(tpAvailableToMint)) throw new Error(`Insufficient ${configProject.tokens.TP.name} available to mint`)
 
   // Mint PEGGED RRC20 function... no values sent
-  valueToSend = null
-
   const moc = dContracts.contracts.moc
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .mintStableTokenVendors(toContractPrecision(reserveAmount), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Mint transaction
+  const mintTx = moc.mintStableTokenVendors(toContractPrecision(reserveAmount), vendorAddress)
 
-  // encode function
-  const encodedCall = moc.methods
-    .mintStableTokenVendors(toContractPrecision(reserveAmount), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(mintTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const redeemTPRRC20 = async (web3, dContracts, configProject, tpAmount) => {
+// redeemTPRRC20 Function
+const redeemTPRRC20 = async (dContracts, configProject, tpAmount) => {
   // Redeem pegged token receiving coin base
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
 
-  // Ensure is in correct app mode
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
-  // get reserve price from contract
-  const reservePrice = new BigNumber(Web3.utils.fromWei(dataContractStatus.bitcoinPrice))
+  // Get reserve price from contract
+  const reservePrice = new BigNumber(ethers.utils.formatEther(dataContractStatus.bitcoinPrice))
 
   // Pegged amount in reserve
   const reserveAmount = new BigNumber(tpAmount).div(reservePrice)
 
-  // Redeem function... no values sent
-  const valueToSend = null
-
   // Verifications
 
-  // User have sufficient PEGGED Token in balance?
-  console.log(`Redeeming ${tpAmount} ${configProject.tokens.TP.name} ... getting approx: ${reserveAmount} ${configProject.tokens.RESERVE.name}... `)
-  const userTPBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.docBalance))
-  if (new BigNumber(tpAmount).gt(userTPBalance)) throw new Error(`Insufficient ${configProject.tokens.TP.name}  user balance`)
+  // User has sufficient PEGGED Token in balance
+  console.log(`Redeeming ${tpAmount} ${configProject.tokens.TP.name} ... getting approx: ${reserveAmount} ${configProject.tokens.RESERVE.name}...`)
+  const userTPBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.docBalance))
+  if (new BigNumber(tpAmount).gt(userTPBalance)) throw new Error(`Insufficient ${configProject.tokens.TP.name} user balance`)
 
-  // There are sufficient Free Pegged Token in the contracts to redeem?
-  const tpAvailableToRedeem = new BigNumber(Web3.utils.fromWei(dataContractStatus.docAvailableToRedeem))
-  if (new BigNumber(tpAmount).gt(tpAvailableToRedeem)) throw new Error(`Insufficient ${configProject.tokens.TP.name}  available to redeem in contract`)
+  // Sufficient Free Pegged Token in the contracts to redeem
+  const tpAvailableToRedeem = new BigNumber(ethers.utils.formatEther(dataContractStatus.docAvailableToRedeem))
+  if (new BigNumber(tpAmount).gt(tpAvailableToRedeem)) throw new Error(`Insufficient ${configProject.tokens.TP.name} available to redeem in contract`)
 
   const moc = dContracts.contracts.moc
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .redeemFreeStableTokenVendors(toContractPrecision(new BigNumber(tpAmount)), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Redeem transaction
+  const redeemTx = moc.redeemFreeStableTokenVendors(toContractPrecision(tpAmount), vendorAddress)
 
-  // encode function
-  const encodedCall = moc.methods
-    .redeemFreeStableTokenVendors(toContractPrecision(new BigNumber(tpAmount)), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(redeemTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const mintTCRRC20 = async (web3, dContracts, configProject, tcAmount) => {
+// mintTCRRC20 Function
+const mintTCRRC20 = async (dContracts, configProject, tcAmount) => {
   // Mint Collateral token with collateral RRC20
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
-  const mintSlippage = `${process.env.MINT_SLIPPAGE}`
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
+  const mintSlippage = new BigNumber(process.env.MINT_SLIPPAGE)
 
-  // Ensure is in correct app mode
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
   // Price of TC in RESERVE
-  const tcPriceInReserve = new BigNumber(Web3.utils.fromWei(dataContractStatus.bproPriceInRbtc))
+  const tcPriceInReserve = new BigNumber(ethers.utils.formatEther(dataContractStatus.bproPriceInRbtc))
 
   // TC amount in reserve
   const reserveAmount = new BigNumber(tcAmount).times(tcPriceInReserve)
 
-  let valueToSend = await addCommissions(web3, dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'RISKPRO', 'MINT')
+  // Add commissions
+  let valueToSend = await addCommissions(dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'RISKPRO', 'MINT')
 
   // Add Slippage plus %
-
-  const mintSlippageAmount = new BigNumber(mintSlippage).div(100).times(reserveAmount)
-
+  const mintSlippageAmount = mintSlippage.div(100).times(reserveAmount)
   valueToSend = new BigNumber(valueToSend).plus(mintSlippageAmount)
 
-  console.log(`Mint Slippage using ${mintSlippage} %. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
+  console.log(`Mint Slippage using ${mintSlippage}%. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
 
   // Verifications
 
-  // User have sufficient reserve to pay?
+  // User has sufficient reserve to pay
   console.log(`To mint ${tcAmount} ${configProject.tokens.TC.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your balance`)
-  const userReserveBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.rbtcBalance))
+  const userReserveBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.rbtcBalance))
   if (valueToSend.gt(userReserveBalance)) throw new Error(`Insufficient ${configProject.tokens.RESERVE.name} balance`)
 
-  // Allowance    reserveAllowance
+  // Allowance
   console.log(`Allowance: To mint ${tcAmount} ${configProject.tokens.TC.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your spendable balance`)
-  const userSpendableBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.reserveAllowance))
+  const userSpendableBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.reserveAllowance))
   if (valueToSend.gt(userSpendableBalance)) throw new Error('Insufficient spendable balance... please make an allowance to the MoC contract')
 
-  valueToSend = null
+  // Mint function... no values sent
   const moc = dContracts.contracts.moc
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .mintRiskProVendors(toContractPrecision(reserveAmount), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Mint transaction
+  const mintTx = moc.mintRiskProVendors(BUCKET_X2, toContractPrecision(reserveAmount), vendorAddress)
 
-  // encode function
-  const encodedCall = moc.methods
-    .mintRiskProVendors(toContractPrecision(reserveAmount), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(mintTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const redeemTCRRC20 = async (web3, dContracts, configProject, tcAmount) => {
+// redeemTCRRC20 Function
+const redeemTCRRC20 = async (dContracts, configProject, tcAmount) => {
   // Redeem Collateral token receiving RRC20
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
 
-  // Ensure is in correct app mode
-  if (configProject.appMode !== 'RRC20') throw new Error('This function is only for RRC20 Mode... are you using in your environment MOC projects?')
+  // Ensure correct app mode
+  if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
   // Price of TC in RESERVE
-  const tcPriceInReserve = new BigNumber(Web3.utils.fromWei(dataContractStatus.bproPriceInRbtc))
+  const tcPriceInReserve = new BigNumber(ethers.utils.formatEther(dataContractStatus.bproPriceInRbtc))
 
   // TC amount in reserve
   const reserveAmount = new BigNumber(tcAmount).times(tcPriceInReserve)
 
-  // Redeem function... no values sent
-  const valueToSend = null
-
   // Verifications
 
-  // User have sufficient TC in balance?
-  console.log(`Redeeming ${tcAmount} ${configProject.tokens.TC.name} ... getting aprox: ${reserveAmount} ${configProject.tokens.RESERVE.name}... `)
-  const userTCBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.bproBalance))
+  // User has sufficient TC in balance
+  console.log(`Redeeming ${tcAmount} ${configProject.tokens.TC.name} ... getting approx: ${reserveAmount} ${configProject.tokens.RESERVE.name}...`)
+  const userTCBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.bproBalance))
   if (new BigNumber(tcAmount).gt(userTCBalance)) throw new Error(`Insufficient ${configProject.tokens.TC.name} user balance`)
 
-  // There are sufficient TC in the contracts to redeem?
-  const tcAvailableToRedeem = new BigNumber(Web3.utils.fromWei(dataContractStatus.bproAvailableToRedeem))
+  // Sufficient TC in the contracts to redeem
+  const tcAvailableToRedeem = new BigNumber(ethers.utils.formatEther(dataContractStatus.bproAvailableToRedeem))
   if (new BigNumber(tcAmount).gt(tcAvailableToRedeem)) throw new Error(`Insufficient ${configProject.tokens.TC.name} available to redeem in contract`)
 
   const moc = dContracts.contracts.moc
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .redeemRiskProVendors(toContractPrecision(new BigNumber(tcAmount)), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Redeem transaction
+  const redeemTx = moc.redeemRiskProVendors(BUCKET_X2, toContractPrecision(new BigNumber(tcAmount)), vendorAddress)
 
-  // encode function
-  const encodedCall = moc.methods
-    .redeemRiskProVendors(toContractPrecision(new BigNumber(tcAmount)), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(redeemTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const mintTXRRC20 = async (web3, dContracts, configProject, txAmount) => {
+// mintTXRRC20 Function
+const mintTXRRC20 = async (dContracts, configProject, txAmount) => {
   // Mint Token X token with collateral RRC20
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
-  const mintSlippage = `${process.env.MINT_SLIPPAGE}`
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
+  const mintSlippage = new BigNumber(process.env.MINT_SLIPPAGE)
 
-  // Ensure is in correct app mode
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
   // Price of TX in coinbase
-  const txPriceInReserve = new BigNumber(Web3.utils.fromWei(dataContractStatus.bprox2PriceInRbtc))
+  const txPriceInReserve = new BigNumber(ethers.utils.formatEther(dataContractStatus.bprox2PriceInRbtc))
 
   // TX amount in reserve
   const reserveAmount = new BigNumber(txAmount).times(txPriceInReserve)
 
-  let valueToSend = await addCommissions(web3, dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'RISKPROX', 'MINT')
+  // Add commissions
+  let valueToSend = await addCommissions(dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, 'RISKPROX', 'MINT')
 
-  // Calc Interest to mint TX
+  // Calculate Interest to mint TX
   const mintInterest = await calcMintInterest(dContracts, reserveAmount)
 
-  valueToSend = new BigNumber(valueToSend).plus(new BigNumber(Web3.utils.fromWei(mintInterest)))
+  valueToSend = new BigNumber(valueToSend).plus(new BigNumber(ethers.utils.formatEther(mintInterest)))
 
   console.log(`Mint TX Interest ${mintInterest}`)
 
   // Add Slippage plus %
-  const mintSlippageAmount = new BigNumber(mintSlippage).div(100).times(reserveAmount)
-
+  const mintSlippageAmount = mintSlippage.div(100).times(reserveAmount)
   valueToSend = new BigNumber(valueToSend).plus(mintSlippageAmount)
 
-  console.log(`Mint Slippage using ${mintSlippage} %. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
+  console.log(`Mint Slippage using ${mintSlippage}%. Slippage amount: ${mintSlippageAmount.toString()} Total to send: ${valueToSend.toString()}`)
 
   // Verifications
 
-  // User have sufficient reserve to pay?
-  console.log(`To mint ${txAmount}  ${configProject.tokens.TX.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your balance`)
-  const userReserveBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.rbtcBalance))
+  // User has sufficient reserve to pay
+  console.log(`To mint ${txAmount} ${configProject.tokens.TX.name} you need > ${valueToSend.toString()} ${configProject.tokens.RESERVE.name} in your balance`)
+  const userReserveBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.rbtcBalance))
   if (valueToSend.gt(userReserveBalance)) throw new Error(`Insufficient ${configProject.tokens.RESERVE.name} balance`)
 
-  // There are sufficient TX in the contracts to mint?
-  const txAvalaiblesToMint = new BigNumber(Web3.utils.fromWei(dataContractStatus.bprox2AvailableToMint))
-  if (new BigNumber(txAmount).gt(txAvalaiblesToMint)) throw new Error(`Insufficient ${configProject.tokens.TX.name} available to mint`)
+  // Sufficient TX in the contracts to mint
+  const txAvailableToMint = new BigNumber(ethers.utils.formatEther(dataContractStatus.bprox2AvailableToMint))
+  if (new BigNumber(txAmount).gt(txAvailableToMint)) throw new Error(`Insufficient ${configProject.tokens.TX.name} available to mint`)
 
-  valueToSend = null
+  // Mint transaction
   const moc = dContracts.contracts.moc
+  const mintTx = moc.mintRiskProxVendors(BUCKET_X2, toContractPrecision(reserveAmount), vendorAddress)
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .mintRiskProxVendors(BUCKET_X2, toContractPrecision(reserveAmount), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
-
-  // encode function
-  const encodedCall = moc.methods
-    .mintRiskProxVendors(BUCKET_X2, toContractPrecision(reserveAmount), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(mintTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const redeemTXRRC20 = async (web3, dContracts, configProject, txAmount) => {
+// redeemTXRRC20 Function
+const redeemTXRRC20 = async (dContracts, configProject, txAmount) => {
   // Redeem token X receiving RRC20
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-  const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
+  const userAddress = process.env.USER_ADDRESS.toLowerCase()
+  const vendorAddress = process.env.VENDOR_ADDRESS.toLowerCase()
 
-  // Ensure is in correct app mode
+  // Ensure correct app mode
   if (configProject.appMode !== 'RRC20') throw new Error('This function is only for app mode = RRC20')
 
   // Get information from contracts
-  const dataContractStatus = await statusFromContracts(web3, dContracts, configProject)
+  const dataContractStatus = await statusFromContracts(dContracts, configProject)
 
   // Get user balance address
-  const userBalanceStats = await userBalanceFromContracts(web3, dContracts, configProject, userAddress)
+  const userBalanceStats = await userBalanceFromContracts(dContracts, configProject, userAddress)
 
   // Price of TX in RESERVE
-  const txPriceInReserve = new BigNumber(Web3.utils.fromWei(dataContractStatus.bprox2PriceInRbtc))
+  const txPriceInReserve = new BigNumber(ethers.utils.formatEther(dataContractStatus.bprox2PriceInRbtc))
 
   // TX amount in reserve RESERVE
   const reserveAmount = new BigNumber(txAmount).times(txPriceInReserve)
 
-  // Redeem function... no values sent
-  const valueToSend = null
-
   // Verifications
 
-  // User have sufficient TX in balance?
-  console.log(`Redeeming ${txAmount} ${configProject.tokens.TX.name}  ... getting approx: ${reserveAmount} ${configProject.tokens.RESERVE.name} ... `)
-  const userTXBalance = new BigNumber(Web3.utils.fromWei(userBalanceStats.bprox2Balance))
-  if (new BigNumber(txAmount).gt(userTXBalance)) throw new Error(`Insufficient ${configProject.tokens.TX.name}  user balance`)
+  // User has sufficient TX in balance
+  console.log(`Redeeming ${txAmount} ${configProject.tokens.TX.name} ... getting approx: ${reserveAmount} ${configProject.tokens.RESERVE.name}...`)
+  const userTXBalance = new BigNumber(ethers.utils.formatEther(userBalanceStats.bprox2Balance))
+  if (new BigNumber(txAmount).gt(userTXBalance)) throw new Error(`Insufficient ${configProject.tokens.TX.name} user balance`)
 
   const moc = dContracts.contracts.moc
 
-  // Calculate estimate gas cost
-  const estimateGas = await moc.methods
-    .redeemRiskProxVendors(BUCKET_X2, toContractPrecision(new BigNumber(txAmount)), vendorAddress)
-    .estimateGas({ from: userAddress, value: '0x' })
+  // Redeem transaction
+  const redeemTx = moc.redeemRiskProxVendors(BUCKET_X2, toContractPrecision(new BigNumber(txAmount)), vendorAddress)
 
-  // encode function
-  const encodedCall = moc.methods
-    .redeemRiskProxVendors(BUCKET_X2, toContractPrecision(new BigNumber(txAmount)), vendorAddress)
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, dContracts.contracts.moc._address)
+  // Send transaction and get receipt
+  const { receipt, filteredEvents } = await sendTransaction(redeemTx, {
+    from: userAddress,
+    gasLimit: 2000000 // Adjust as needed
+  })
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 

@@ -1,32 +1,32 @@
-import BigNumber from 'bignumber.js'
-import Web3 from 'web3'
+import { BigNumber } from 'bignumber.js'
+import { ethers } from 'ethers'
 
 import { sendTransaction } from '../transaction.js'
 import { toContractPrecision, BUCKET_X2 } from '../utils.js'
 import { calcCommission } from './multicall.js'
 
-const addCommissions = async (web3, dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, token, action) => {
+const addCommissions = async (provider, dContracts, configProject, dataContractStatus, userBalanceStats, reserveAmount, token, action) => {
   // get reserve price from contract
-  const reservePrice = new BigNumber(Web3.utils.fromWei(dataContractStatus.bitcoinPrice))
+  const reservePrice = new BigNumber(ethers.utils.formatEther(dataContractStatus.bitcoinPrice))
 
   // Get commissions from contracts
-  const commissions = await calcCommission(web3, dContracts, dataContractStatus, reserveAmount, token, action)
+  const commissions = await calcCommission(provider, dContracts, dataContractStatus, reserveAmount, token, action)
 
   // Calculate commissions using Reserve payment
-  const commissionInReserve = new BigNumber(Web3.utils.fromWei(commissions.commission_reserve))
-    .plus(new BigNumber(Web3.utils.fromWei(commissions.vendorMarkup)))
+  const commissionInReserve = new BigNumber(ethers.utils.formatEther(commissions.commission_reserve))
+    .plus(new BigNumber(ethers.utils.formatEther(commissions.vendorMarkup)))
 
   // Calculate commissions using TG payment
-  const commissionInTG = new BigNumber(Web3.utils.fromWei(commissions.commission_moc))
-    .plus(new BigNumber(Web3.utils.fromWei(commissions.vendorMarkup)))
-    .times(reservePrice).div(Web3.utils.fromWei(dataContractStatus.mocPrice))
+  const commissionInTG = new BigNumber(ethers.utils.formatEther(commissions.commission_moc))
+    .plus(new BigNumber(ethers.utils.formatEther(commissions.vendorMarkup)))
+    .times(reservePrice).div(ethers.utils.formatEther(dataContractStatus.mocPrice))
 
   // Enough TG to Pay commission with TG
-  const enoughTGBalance = BigNumber(Web3.utils.fromWei(userBalanceStats.mocBalance)).gte(commissionInTG)
+  const enoughTGBalance = BigNumber(ethers.utils.formatEther(userBalanceStats.mocBalance)).gte(commissionInTG)
 
   // Enough TG allowance to Pay commission with TG
-  const enoughTGAllowance = BigNumber(Web3.utils.fromWei(userBalanceStats.mocAllowance)).gt(0) &&
-      BigNumber(Web3.utils.fromWei(userBalanceStats.mocAllowance)).gte(commissionInTG)
+  const enoughTGAllowance = BigNumber(ethers.utils.formatEther(userBalanceStats.mocAllowance)).gt(0) &&
+      BigNumber(ethers.utils.formatEther(userBalanceStats.mocAllowance)).gte(commissionInTG)
 
   // add commission to value send
   let valueToSend
@@ -42,8 +42,8 @@ const addCommissions = async (web3, dContracts, configProject, dataContractStatu
   return valueToSend
 }
 
-const AllowPayingCommissionTG = async (web3, dContracts, allow) => {
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
+const AllowPayingCommissionTG = async (provider, dContracts, allow) => {
+  // const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
   const tg = dContracts.contracts.tg
 
   let amountAllowance = '0'
@@ -52,18 +52,10 @@ const AllowPayingCommissionTG = async (web3, dContracts, allow) => {
     amountAllowance = Number.MAX_SAFE_INTEGER.toString()
   }
 
-  // Calculate estimate gas cost
-  const estimateGas = await tg.methods
-    .approve(dContracts.contracts.moc._address, web3.utils.toWei(amountAllowance))
-    .estimateGas({ from: userAddress, value: '0x' })
+  const estimateGas = await tg.estimateGas.approve(dContracts.contracts.moc.address, ethers.utils.parseEther(amountAllowance))
+  const encodedCall = tg.interface.encodeFunctionData('approve', [dContracts.contracts.moc.address, ethers.utils.parseEther(amountAllowance)])
 
-  // encode function
-  const encodedCall = tg.methods
-    .approve(dContracts.contracts.moc._address, web3.utils.toWei(amountAllowance))
-    .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, tg._address)
+  const { receipt, filteredEvents } = await sendTransaction(provider, valueToSend, estimateGas, encodedCall, tg.address)
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
@@ -72,16 +64,16 @@ const AllowPayingCommissionTG = async (web3, dContracts, allow) => {
 
 const calcMintInterest = async (dContracts, amount) => {
   const mocinrate = dContracts.contracts.mocinrate
-  const calcMintInterest = await mocinrate.methods.calcMintInterestValues(BUCKET_X2, toContractPrecision(amount)).call()
+  const calcMintInterest = await mocinrate.calcMintInterestValues(BUCKET_X2, toContractPrecision(amount))
   return calcMintInterest
 }
 
-const AllowUseTokenMigrator = async (web3, dContracts, allow) => {
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
+const AllowUseTokenMigrator = async (provider, dContracts, allow) => {
+  // const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
 
-  if (!dContracts.contracts.tp_legacy) console.log("Error: Please set token migrator address!")
+  if (!dContracts.contracts.tp_legacy) console.log('Error: Please set token migrator address!')
 
-  const tp_legacy = dContracts.contracts.tp_legacy
+  const tpLegacy = dContracts.contracts.tp_legacy
   const tokenMigrator = dContracts.contracts.token_migrator
 
   let amountAllowance = '0'
@@ -90,46 +82,29 @@ const AllowUseTokenMigrator = async (web3, dContracts, allow) => {
     amountAllowance = Number.MAX_SAFE_INTEGER.toString()
   }
 
-  // Calculate estimate gas cost
-  const estimateGas = await tp_legacy.methods
-      .approve(tokenMigrator._address, web3.utils.toWei(amountAllowance))
-      .estimateGas({ from: userAddress, value: '0x' })
+  const estimateGas = await tpLegacy.estimateGas.approve(tokenMigrator.address, ethers.utils.parseEther(amountAllowance))
+  const encodedCall = tpLegacy.interface.encodeFunctionData('approve', [tokenMigrator.address, ethers.utils.parseEther(amountAllowance)])
 
-  // encode function
-  const encodedCall = tp_legacy.methods
-      .approve(tokenMigrator._address, web3.utils.toWei(amountAllowance))
-      .encodeABI()
-
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, tp_legacy._address)
+  const { receipt, filteredEvents } = await sendTransaction(provider, valueToSend, estimateGas, encodedCall, tpLegacy.address)
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }
 
-const MigrateToken = async (web3, dContracts) => {
+const MigrateToken = async (provider, dContracts) => {
+  // const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
 
-  const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
-
-  if (!dContracts.contracts.token_migrator) console.log("Error: Please set token migrator address!")
+  if (!dContracts.contracts.token_migrator) console.log('Error: Please set token migrator address!')
 
   const tokenMigrator = dContracts.contracts.token_migrator
 
-  // Calculate estimate gas cost
-  const estimateGas = await tokenMigrator.methods
-      .migrateToken()
-      .estimateGas({ from: userAddress, value: '0x' })
-
-  // encode function
-  const encodedCall = tokenMigrator.methods
-      .migrateToken()
-      .encodeABI()
+  const estimateGas = await tokenMigrator.estimateGas.migrateToken()
+  const encodedCall = tokenMigrator.interface.encodeFunctionData('migrateToken')
 
   const valueToSend = null
 
-  // send transaction to the blockchain and get receipt
-  const { receipt, filteredEvents } = await sendTransaction(web3, valueToSend, estimateGas, encodedCall, tokenMigrator._address)
+  const { receipt, filteredEvents } = await sendTransaction(provider, valueToSend, estimateGas, encodedCall, tokenMigrator.address)
 
   console.log(`Transaction hash: ${receipt.transactionHash}`)
 

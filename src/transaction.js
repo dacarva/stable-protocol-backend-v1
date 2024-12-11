@@ -1,4 +1,4 @@
-import Web3 from 'web3'
+import { ethers } from 'ethers'
 import abiDecoder from 'abi-decoder'
 
 import { toContractPrecision } from './utils.js'
@@ -68,7 +68,7 @@ const renderEventField = (eveName, eveValue) => {
     'TokenMigrated'
   ])
 
-  if (formatItemsWei.has(eveName)) { eveValue = Web3.utils.fromWei(eveValue) }
+  if (formatItemsWei.has(eveName)) { eveValue = ethers.utils.formatEther(eveValue) }
 
   console.log('\x1b[32m%s\x1b[0m', `${eveName}: ${eveValue}`)
 }
@@ -129,44 +129,37 @@ const decodeEvents = (receipt) => {
   return filteredEvents
 }
 
-const sendTransaction = async (web3, value, estimateGas, encodedCall, toContract) => {
+const sendTransaction = async (provider, value, estimateGas, encodedCall, toContract) => {
   const userAddress = `${process.env.USER_ADDRESS}`.toLowerCase()
   const privateKey = process.env.USER_PK
   const gasMultiplier = process.env.GAS_MULTIPLIER
 
   console.log('Please wait... sending transaction... Wait until blockchain mine transaction!')
 
-  let valueToSend
-  if ((typeof value === 'undefined') || value === null) {
-    valueToSend = '0x'
-  } else {
+  const signer = new ethers.Wallet(privateKey, provider)
+
+  let valueToSend = '0x'
+  if (value) {
     valueToSend = toContractPrecision(value)
   }
 
-  // Get gas price from node
-  const gasPrice = await web3.eth.getGasPrice()
+  const gasPrice = await provider.getGasPrice()
 
-  // Sign transaction need it PK
-  const transaction = await web3.eth.accounts.signTransaction(
-    {
-      from: userAddress,
-      to: toContract,
-      value: valueToSend,
-      gas: estimateGas * gasMultiplier,
-      gasPrice,
-      gasLimit: estimateGas * gasMultiplier,
-      data: encodedCall
-    },
-    privateKey
-  )
+  const tx = {
+    from: userAddress,
+    to: toContract,
+    value: valueToSend,
+    gasLimit: Math.floor(estimateGas * gasMultiplier),
+    gasPrice: gasPrice,
+    data: encodedCall
+  }
 
-  // Send transaction and get recipt
-  const receipt = await web3.eth.sendSignedTransaction(
-    transaction.rawTransaction
-  )
+  const signedTx = await signer.sendTransaction(tx)
+  const receipt = await signedTx.wait()
 
-  // Print decode events
   const filteredEvents = decodeEvents(receipt)
+
+  console.log(`Transaction hash: ${receipt.transactionHash}`)
 
   return { receipt, filteredEvents }
 }

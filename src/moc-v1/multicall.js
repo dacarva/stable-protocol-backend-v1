@@ -1,35 +1,59 @@
+import { ethers } from 'ethers'
 import { toContractPrecision, BUCKET_X2, BUCKET_C0 } from '../utils.js'
 
-const connectorAddresses = async (web3, dContracts, configProject) => {
+// Connector Addresses Function
+const connectorAddresses = async (dContracts, configProject) => {
   const multicall = dContracts.contracts.multicall
   const mocconnector = dContracts.contracts.mocconnector
   const appMode = configProject.appMode
 
-  const listMethods = [
-    [mocconnector.options.address, mocconnector.methods.mocState().encodeABI()],
-    [mocconnector.options.address, mocconnector.methods.mocInrate().encodeABI()],
-    [mocconnector.options.address, mocconnector.methods.mocExchange().encodeABI()],
-    [mocconnector.options.address, mocconnector.methods.mocSettlement().encodeABI()]
+  const listCalls = [
+    { target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('mocState') },
+    { target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('mocInrate') },
+    { target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('mocExchange') },
+    { target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('mocSettlement') }
+  ]
+
+  const returnTypes = [
+    'address', // mocState
+    'address', // mocInrate
+    'address', // mocExchange
+    'address' // mocSettlement
   ]
 
   if (appMode === 'MoC') {
-    listMethods.push([mocconnector.options.address, mocconnector.methods.docToken().encodeABI()])
-    listMethods.push([mocconnector.options.address, mocconnector.methods.bproToken().encodeABI()])
-    listMethods.push([mocconnector.options.address, mocconnector.methods.bproToken().encodeABI()])
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('docToken') })
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('bproToken') })
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('bproToken') })
+    returnTypes.push('address') // docToken
+    returnTypes.push('address') // bproToken
+    returnTypes.push('address') // bproToken
   } else {
-    listMethods.push([mocconnector.options.address, mocconnector.methods.stableToken().encodeABI()])
-    listMethods.push([mocconnector.options.address, mocconnector.methods.riskProToken().encodeABI()])
-    listMethods.push([mocconnector.options.address, mocconnector.methods.reserveToken().encodeABI()])
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('stableToken') })
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('riskProToken') })
+    listCalls.push({ target: mocconnector.address, callData: mocconnector.interface.encodeFunctionData('reserveToken') })
+    returnTypes.push('address') // stableToken
+    returnTypes.push('address') // riskProToken
+    returnTypes.push('address') // reserveToken
   }
 
-  const multicallResult = await multicall.methods.tryBlockAndAggregate(false, listMethods).call()
+  const [blockHeight, returnDataArray] = await multicall.tryBlockAndAggregate(false, listCalls)
+  console.log('🚀 ~ connectorAddresses ~ blockHeight:', blockHeight)
 
-  const listReturnData = multicallResult[2].map(x => web3.eth.abi.decodeParameter('address', x.returnData))
+  const listReturnData = returnDataArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypes[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
 
   return listReturnData
 }
 
-const contractStatus = async (web3, dContracts, configProject) => {
+// Contract Status Function
+const contractStatus = async (dContracts, configProject) => {
   const appMode = configProject.appMode
   const appProject = configProject.appProject
 
@@ -41,131 +65,251 @@ const contractStatus = async (web3, dContracts, configProject) => {
 
   console.log('Reading contract status ...')
 
-  let listMethods
+  let listCalls = []
+  let returnTypes = []
 
   if (appMode === 'MoC') {
-    listMethods = [
-      [mocstate.options.address, mocstate.methods.getBitcoinPrice().encodeABI(), 'uint256'], // 0
-      [mocstate.options.address, mocstate.methods.getMoCPrice().encodeABI(), 'uint256'], // 1
-      [mocstate.options.address, mocstate.methods.absoluteMaxBPro().encodeABI(), 'uint256'], // 2
-      [mocstate.options.address, mocstate.methods.maxBProx(BUCKET_X2).encodeABI(), 'uint256'], // 3
-      [mocstate.options.address, mocstate.methods.absoluteMaxDoc().encodeABI(), 'uint256'], // 4
-      [mocstate.options.address, mocstate.methods.freeDoc().encodeABI(), 'uint256'], // 5
-      [mocstate.options.address, mocstate.methods.leverage(BUCKET_C0).encodeABI(), 'uint256'], // 6
-      [mocstate.options.address, mocstate.methods.cobj().encodeABI(), 'uint256'], // 7
-      [mocstate.options.address, mocstate.methods.leverage(BUCKET_X2).encodeABI(), 'uint256'], // 8
-      [mocstate.options.address, mocstate.methods.rbtcInSystem().encodeABI(), 'uint256'], // 9
-      [mocstate.options.address, mocstate.methods.getBitcoinMovingAverage().encodeABI(), 'uint256'], // 10
-      [mocstate.options.address, mocstate.methods.getInrateBag(BUCKET_C0).encodeABI(), 'uint256'], // 11
-      [mocstate.options.address, mocstate.methods.getBucketNBTC(BUCKET_C0).encodeABI(), 'uint256'], // 12
-      [mocstate.options.address, mocstate.methods.getBucketNDoc(BUCKET_C0).encodeABI(), 'uint256'], // 13
-      [mocstate.options.address, mocstate.methods.getBucketNBPro(BUCKET_C0).encodeABI(), 'uint256'], // 14
-      [mocstate.options.address, mocstate.methods.getBucketNBTC(BUCKET_X2).encodeABI(), 'uint256'], // 15
-      [mocstate.options.address, mocstate.methods.getBucketNDoc(BUCKET_X2).encodeABI(), 'uint256'], // 16
-      [mocstate.options.address, mocstate.methods.getBucketNBPro(BUCKET_X2).encodeABI(), 'uint256'], // 17
-      [mocstate.options.address, mocstate.methods.globalCoverage().encodeABI(), 'uint256'], // 18
-      [moc.options.address, moc.methods.getReservePrecision().encodeABI(), 'uint256'], // 19
-      [moc.options.address, moc.methods.getMocPrecision().encodeABI(), 'uint256'], // 20
-      [mocstate.options.address, mocstate.methods.coverage(BUCKET_X2).encodeABI(), 'uint256'], // 21
-      [mocstate.options.address, mocstate.methods.bproTecPrice().encodeABI(), 'uint256'], // 22
-      [mocstate.options.address, mocstate.methods.bproUsdPrice().encodeABI(), 'uint256'], // 23
-      [mocstate.options.address, mocstate.methods.bproSpotDiscountRate().encodeABI(), 'uint256'], // 24
-      [mocstate.options.address, mocstate.methods.maxBProWithDiscount().encodeABI(), 'uint256'], // 25
-      [mocstate.options.address, mocstate.methods.bproDiscountPrice().encodeABI(), 'uint256'], // 26
-      [mocstate.options.address, mocstate.methods.bucketBProTecPrice(BUCKET_X2).encodeABI(), 'uint256'], // 27
-      [mocstate.options.address, mocstate.methods.bproxBProPrice(BUCKET_X2).encodeABI(), 'uint256'], // 28
-      [mocinrate.options.address, mocinrate.methods.spotInrate().encodeABI(), 'uint256'], // 29
-      [mocinrate.options.address, mocinrate.methods.MINT_BPRO_FEES_RBTC().encodeABI(), 'uint256'], // 30
-      [mocinrate.options.address, mocinrate.methods.REDEEM_BPRO_FEES_RBTC().encodeABI(), 'uint256'], // 31
-      [mocinrate.options.address, mocinrate.methods.MINT_DOC_FEES_RBTC().encodeABI(), 'uint256'], // 32
-      [mocinrate.options.address, mocinrate.methods.REDEEM_DOC_FEES_RBTC().encodeABI(), 'uint256'], // 33
-      [mocinrate.options.address, mocinrate.methods.MINT_BTCX_FEES_RBTC().encodeABI(), 'uint256'], // 34
-      [mocinrate.options.address, mocinrate.methods.REDEEM_BTCX_FEES_RBTC().encodeABI(), 'uint256'], // 35
-      [mocinrate.options.address, mocinrate.methods.MINT_BPRO_FEES_MOC().encodeABI(), 'uint256'], // 36
-      [mocinrate.options.address, mocinrate.methods.REDEEM_BPRO_FEES_MOC().encodeABI(), 'uint256'], // 37
-      [mocinrate.options.address, mocinrate.methods.MINT_DOC_FEES_MOC().encodeABI(), 'uint256'], // 38
-      [mocinrate.options.address, mocinrate.methods.REDEEM_DOC_FEES_MOC().encodeABI(), 'uint256'], // 39
-      [mocinrate.options.address, mocinrate.methods.MINT_BTCX_FEES_MOC().encodeABI(), 'uint256'], // 40
-      [mocinrate.options.address, mocinrate.methods.REDEEM_BTCX_FEES_MOC().encodeABI(), 'uint256'], // 41
-      [mocstate.options.address, mocstate.methods.dayBlockSpan().encodeABI(), 'uint256'], // 42
-      [mocsettlement.options.address, mocsettlement.methods.getBlockSpan().encodeABI(), 'uint256'], // 43
-      [mocstate.options.address, mocstate.methods.blocksToSettlement().encodeABI(), 'uint256'], // 44
-      [mocstate.options.address, mocstate.methods.state().encodeABI(), 'uint256'], // 45
-      [moc.options.address, moc.methods.paused().encodeABI(), 'bool'], // 46
-      [mocstate.options.address, mocstate.methods.getLiquidationEnabled().encodeABI(), 'bool'], // 47
-      [mocstate.options.address, mocstate.methods.getProtected().encodeABI(), 'uint256'], // 48
-      [mocstate.options.address, mocstate.methods.getMoCToken().encodeABI(), 'address'], // 49
-      [mocstate.options.address, mocstate.methods.getMoCPriceProvider().encodeABI(), 'address'], // 50
-      [mocstate.options.address, mocstate.methods.getBtcPriceProvider().encodeABI(), 'address'], // 51
-      [mocstate.options.address, mocstate.methods.getMoCVendors().encodeABI(), 'address'] // 52
+    listCalls = [
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBitcoinPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('absoluteMaxBPro') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('maxBProx', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('absoluteMaxDoc') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('freeDoc') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('leverage', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('cobj') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('leverage', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('rbtcInSystem') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBitcoinMovingAverage') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getInrateBag', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNBTC', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNDoc', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNBPro', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNBTC', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNDoc', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNBPro', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('globalCoverage') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('getReservePrecision') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('getMocPrecision') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('coverage', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproTecPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproUsdPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproSpotDiscountRate') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('maxBProWithDiscount') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproDiscountPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bucketBProTecPrice', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproxBProPrice', [BUCKET_X2]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('spotInrate') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_BPRO_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_BPRO_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_DOC_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_DOC_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_BTCX_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_BTCX_FEES_RBTC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_BPRO_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_BPRO_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_DOC_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_DOC_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_BTCX_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_BTCX_FEES_MOC') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('dayBlockSpan') },
+      { target: mocsettlement.address, callData: mocsettlement.interface.encodeFunctionData('getBlockSpan') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('blocksToSettlement') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('state') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('paused') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getLiquidationEnabled') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getProtected') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCToken') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPriceProvider') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBtcPriceProvider') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCVendors') }
+    ]
+
+    returnTypes = [
+      'uint256', // 0
+      'uint256', // 1
+      'uint256', // 2
+      'uint256', // 3
+      'uint256', // 4
+      'uint256', // 5
+      'uint256', // 6
+      'uint256', // 7
+      'uint256', // 8
+      'uint256', // 9
+      'uint256', // 10
+      'uint256', // 11
+      'uint256', // 12
+      'uint256', // 13
+      'uint256', // 14
+      'uint256', // 15
+      'uint256', // 16
+      'uint256', // 17
+      'uint256', // 18
+      'uint256', // 19
+      'uint256', // 20
+      'uint256', // 21
+      'uint256', // 22
+      'uint256', // 23
+      'uint256', // 24
+      'uint256', // 25
+      'uint256', // 26
+      'uint256', // 27
+      'uint256', // 28
+      'uint256', // 29
+      'uint256', // 30
+      'uint256', // 31
+      'uint256', // 32
+      'uint256', // 33
+      'uint256', // 34
+      'uint256', // 35
+      'uint256', // 36
+      'uint256', // 37
+      'uint256', // 38
+      'uint256', // 39
+      'uint256', // 40
+      'uint256', // 41
+      'uint256', // 42
+      'uint256', // 43
+      'uint256', // 44
+      'uint256', // 45
+      'bool', // 46
+      'bool', // 47
+      'uint256', // 48
+      'address', // 49
+      'address', // 50
+      'address', // 51
+      'address' // 52
     ]
   } else {
-    listMethods = [
-      [mocstate.options.address, mocstate.methods.getReserveTokenPrice().encodeABI(), 'uint256'], // 0
-      [mocstate.options.address, mocstate.methods.getMoCPrice().encodeABI(), 'uint256'], // 1
-      [mocstate.options.address, mocstate.methods.absoluteMaxRiskPro().encodeABI(), 'uint256'], // 2
-      [mocstate.options.address, mocstate.methods.maxRiskProx(BUCKET_X2).encodeABI(), 'uint256'], // 3
-      [mocstate.options.address, mocstate.methods.absoluteMaxStableToken().encodeABI(), 'uint256'], // 4
-      [mocstate.options.address, mocstate.methods.freeStableToken().encodeABI(), 'uint256'], // 5
-      [mocstate.options.address, mocstate.methods.leverage(BUCKET_C0).encodeABI(), 'uint256'], // 6
-      [mocstate.options.address, mocstate.methods.cobj().encodeABI(), 'uint256'], // 7
-      [mocstate.options.address, mocstate.methods.leverage(BUCKET_X2).encodeABI(), 'uint256'], // 8
-      [mocstate.options.address, mocstate.methods.reserves().encodeABI(), 'uint256'], // 9
-      [mocstate.options.address, mocstate.methods.getExponentalMovingAverage().encodeABI(), 'uint256'], // 10
-      [mocstate.options.address, mocstate.methods.getInrateBag(BUCKET_C0).encodeABI(), 'uint256'], // 11
-      [mocstate.options.address, mocstate.methods.getBucketNReserve(BUCKET_C0).encodeABI(), 'uint256'], // 12
-      [mocstate.options.address, mocstate.methods.getBucketNStableToken(BUCKET_C0).encodeABI(), 'uint256'], // 13
-      [mocstate.options.address, mocstate.methods.getBucketNRiskPro(BUCKET_C0).encodeABI(), 'uint256'], // 14
-      [mocstate.options.address, mocstate.methods.getBucketNReserve(BUCKET_X2).encodeABI(), 'uint256'], // 15
-      [mocstate.options.address, mocstate.methods.getBucketNStableToken(BUCKET_X2).encodeABI(), 'uint256'], // 16
-      [mocstate.options.address, mocstate.methods.getBucketNRiskPro(BUCKET_X2).encodeABI(), 'uint256'], // 17
-      [mocstate.options.address, mocstate.methods.globalCoverage().encodeABI(), 'uint256'], // 18
-      [moc.options.address, moc.methods.getReservePrecision().encodeABI(), 'uint256'], // 19
-      [moc.options.address, moc.methods.getMocPrecision().encodeABI(), 'uint256'], // 20
-      [mocstate.options.address, mocstate.methods.coverage(BUCKET_X2).encodeABI(), 'uint256'], // 21
-      [mocstate.options.address, mocstate.methods.riskProTecPrice().encodeABI(), 'uint256'], // 22
-      [mocstate.options.address, mocstate.methods.riskProUsdPrice().encodeABI(), 'uint256'], // 23
-      [mocstate.options.address, mocstate.methods.riskProSpotDiscountRate().encodeABI(), 'uint256'], // 24
-      [mocstate.options.address, mocstate.methods.maxRiskProWithDiscount().encodeABI(), 'uint256'], // 25
-      [mocstate.options.address, mocstate.methods.riskProDiscountPrice().encodeABI(), 'uint256'], // 26
-      [mocstate.options.address, mocstate.methods.bucketRiskProTecPrice(BUCKET_X2).encodeABI(), 'uint256'], // 27
-      [mocstate.options.address, mocstate.methods.riskProxRiskProPrice(BUCKET_X2).encodeABI(), 'uint256'], // 28
-      [mocinrate.options.address, mocinrate.methods.spotInrate().encodeABI(), 'uint256'], // 29
-      [mocinrate.options.address, mocinrate.methods.MINT_RISKPRO_FEES_RESERVE().encodeABI(), 'uint256'], // 30
-      [mocinrate.options.address, mocinrate.methods.REDEEM_RISKPRO_FEES_RESERVE().encodeABI(), 'uint256'], // 31
-      [mocinrate.options.address, mocinrate.methods.MINT_STABLETOKEN_FEES_RESERVE().encodeABI(), 'uint256'], // 32
-      [mocinrate.options.address, mocinrate.methods.REDEEM_STABLETOKEN_FEES_RESERVE().encodeABI(), 'uint256'], // 33
-      [mocinrate.options.address, mocinrate.methods.MINT_RISKPROX_FEES_RESERVE().encodeABI(), 'uint256'], // 34
-      [mocinrate.options.address, mocinrate.methods.REDEEM_RISKPROX_FEES_RESERVE().encodeABI(), 'uint256'], // 35
-      [mocinrate.options.address, mocinrate.methods.MINT_RISKPRO_FEES_MOC().encodeABI(), 'uint256'], // 36
-      [mocinrate.options.address, mocinrate.methods.REDEEM_RISKPRO_FEES_MOC().encodeABI(), 'uint256'], // 37
-      [mocinrate.options.address, mocinrate.methods.MINT_STABLETOKEN_FEES_MOC().encodeABI(), 'uint256'], // 38
-      [mocinrate.options.address, mocinrate.methods.REDEEM_STABLETOKEN_FEES_MOC().encodeABI(), 'uint256'], // 39
-      [mocinrate.options.address, mocinrate.methods.MINT_RISKPROX_FEES_MOC().encodeABI(), 'uint256'], // 40
-      [mocinrate.options.address, mocinrate.methods.REDEEM_RISKPROX_FEES_MOC().encodeABI(), 'uint256'], // 41
-      [mocstate.options.address, mocstate.methods.dayBlockSpan().encodeABI(), 'uint256'], // 42
-      [mocsettlement.options.address, mocsettlement.methods.getBlockSpan().encodeABI(), 'uint256'], // 43
-      [mocstate.options.address, mocstate.methods.blocksToSettlement().encodeABI(), 'uint256'], // 44
-      [mocstate.options.address, mocstate.methods.state().encodeABI(), 'uint256'], // 45
-      [moc.options.address, moc.methods.paused().encodeABI(), 'bool'], // 46
-      [mocstate.options.address, mocstate.methods.getLiquidationEnabled().encodeABI(), 'bool'], // 47
-      [mocstate.options.address, mocstate.methods.getProtected().encodeABI(), 'uint256'], // 48
-      [mocstate.options.address, mocstate.methods.getMoCToken().encodeABI(), 'address'], // 49
-      [mocstate.options.address, mocstate.methods.getMoCPriceProvider().encodeABI(), 'address'], // 50
-      [mocstate.options.address, mocstate.methods.getPriceProvider().encodeABI(), 'address'], // 51
-      [mocstate.options.address, mocstate.methods.getMoCVendors().encodeABI(), 'address'] // 52
+    listCalls = [
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getReserveTokenPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('absoluteMaxRiskPro') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('maxRiskProx', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('absoluteMaxStableToken') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('freeStableToken') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('leverage', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('cobj') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('leverage', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('reserves') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getExponentalMovingAverage') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getInrateBag', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNReserve', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNStableToken', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNRiskPro', [BUCKET_C0]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNReserve', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNStableToken', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBucketNRiskPro', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('globalCoverage') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('getReservePrecision') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('getMocPrecision') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('coverage', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProTecPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProUsdPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProSpotDiscountRate') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('maxRiskProWithDiscount') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProDiscountPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bucketRiskProTecPrice', [BUCKET_X2]) },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProxRiskProPrice', [BUCKET_X2]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('spotInrate') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_RISKPRO_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_RISKPRO_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_STABLETOKEN_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_STABLETOKEN_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_RISKPROX_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_RISKPROX_FEES_RESERVE') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_RISKPRO_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_RISKPRO_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_STABLETOKEN_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_STABLETOKEN_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('MINT_RISKPROX_FEES_MOC') },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('REDEEM_RISKPROX_FEES_MOC') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('dayBlockSpan') },
+      { target: mocsettlement.address, callData: mocsettlement.interface.encodeFunctionData('getBlockSpan') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('blocksToSettlement') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('state') },
+      { target: moc.address, callData: moc.interface.encodeFunctionData('paused') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getLiquidationEnabled') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getProtected') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCToken') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPriceProvider') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBtcPriceProvider') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCVendors') }
+    ]
+
+    returnTypes = [
+      'uint256', // 0
+      'uint256', // 1
+      'uint256', // 2
+      'uint256', // 3
+      'uint256', // 4
+      'uint256', // 5
+      'uint256', // 6
+      'uint256', // 7
+      'uint256', // 8
+      'uint256', // 9
+      'uint256', // 10
+      'uint256', // 11
+      'uint256', // 12
+      'uint256', // 13
+      'uint256', // 14
+      'uint256', // 15
+      'uint256', // 16
+      'uint256', // 17
+      'uint256', // 18
+      'uint256', // 19
+      'uint256', // 20
+      'uint256', // 21
+      'uint256', // 22
+      'uint256', // 23
+      'uint256', // 24
+      'uint256', // 25
+      'uint256', // 26
+      'uint256', // 27
+      'uint256', // 28
+      'uint256', // 29
+      'uint256', // 30
+      'uint256', // 31
+      'uint256', // 32
+      'uint256', // 33
+      'uint256', // 34
+      'uint256', // 35
+      'uint256', // 36
+      'uint256', // 37
+      'uint256', // 38
+      'uint256', // 39
+      'uint256', // 40
+      'uint256', // 41
+      'uint256', // 42
+      'uint256', // 43
+      'uint256', // 44
+      'uint256', // 45
+      'bool', // 46
+      'bool', // 47
+      'uint256', // 48
+      'address', // 49
+      'address', // 50
+      'address', // 51
+      'address' // 52
     ]
   }
 
-  // Remove decode result parameter
-  const cleanListMethods = listMethods.map(x => [x[0], x[1]])
+  // Execute Multicall
+  const [blockHeight, returnDataArray] = await multicall.tryBlockAndAggregate(false, listCalls)
 
-  const multicallResult = await multicall.methods.tryBlockAndAggregate(false, cleanListMethods).call()
+  // Decode Return Data
+  const listReturnData = returnDataArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypes[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
 
-  const listReturnData = multicallResult[2].map((item, itemIndex) => web3.eth.abi.decodeParameter(listMethods[itemIndex][2], item.returnData))
-
+  // Populate dMocState Object
   const dMocState = {}
-  dMocState.blockHeight = multicallResult[0]
+  dMocState.blockHeight = blockHeight
   dMocState.bitcoinPrice = listReturnData[0]
   dMocState.mocPrice = listReturnData[1]
   dMocState.bproAvailableToRedeem = listReturnData[2]
@@ -197,6 +341,7 @@ const contractStatus = async (web3, dContracts, configProject) => {
   dMocState.bprox2PriceInBpro = listReturnData[28]
   dMocState.spotInrate = listReturnData[29]
 
+  // Commission Rates Types
   const commissionRatesTypes = {}
 
   if (appMode === 'MoC') {
@@ -241,142 +386,83 @@ const contractStatus = async (web3, dContracts, configProject) => {
   dMocState.getBtcPriceProvider = listReturnData[51]
   dMocState.getMoCVendors = listReturnData[52]
 
-  // Commission rates
-  let listMethodsRates
+  // Commission Rates Calculation
+  let listCallsRates = []
+  let returnTypesRates = []
+
   if (appMode === 'MoC') {
-    listMethodsRates = [
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_BPRO_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 0
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_BPRO_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 1
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_DOC_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 2
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_DOC_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 3
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_BTCX_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 4
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_BTCX_FEES_RBTC).encodeABI(),
-        'uint256'
-      ], // 5
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_BPRO_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 6
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_BPRO_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 7
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_DOC_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 8
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_DOC_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 9
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_BTCX_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 10
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_BTCX_FEES_MOC).encodeABI(),
-        'uint256'
-      ] // 11
+    listCallsRates = [
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_BPRO_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_BPRO_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_DOC_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_DOC_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_BTCX_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_BTCX_FEES_RBTC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_BPRO_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_BPRO_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_DOC_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_DOC_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_BTCX_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_BTCX_FEES_MOC]) }
+    ]
+
+    returnTypesRates = [
+      'uint256', // 0
+      'uint256', // 1
+      'uint256', // 2
+      'uint256', // 3
+      'uint256', // 4
+      'uint256', // 5
+      'uint256', // 6
+      'uint256', // 7
+      'uint256', // 8
+      'uint256', // 9
+      'uint256', // 10
+      'uint256' // 11
     ]
   } else {
-    listMethodsRates = [
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_RISKPRO_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 0
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_RISKPRO_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 1
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_STABLETOKEN_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 2
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_STABLETOKEN_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 3
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_RISKPROX_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 4
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_RISKPROX_FEES_RESERVE).encodeABI(),
-        'uint256'
-      ], // 5
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_RISKPRO_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 6
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_RISKPRO_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 7
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_STABLETOKEN_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 8
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_STABLETOKEN_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 9
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.MINT_RISKPROX_FEES_MOC).encodeABI(),
-        'uint256'
-      ], // 10
-      [
-        mocinrate.options.address,
-        mocinrate.methods.commissionRatesByTxType(dMocState.commissionRatesTypes.REDEEM_RISKPROX_FEES_MOC).encodeABI(),
-        'uint256'
-      ] // 11
+    listCallsRates = [
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_RISKPRO_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_RISKPRO_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_STABLETOKEN_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_STABLETOKEN_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_RISKPROX_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_RISKPROX_FEES_RESERVE]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_RISKPRO_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_RISKPRO_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_STABLETOKEN_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_STABLETOKEN_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.MINT_RISKPROX_FEES_MOC]) },
+      { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('commissionRatesByTxType', [commissionRatesTypes.REDEEM_RISKPROX_FEES_MOC]) }
+    ]
+
+    returnTypesRates = [
+      'uint256', // 0
+      'uint256', // 1
+      'uint256', // 2
+      'uint256', // 3
+      'uint256', // 4
+      'uint256', // 5
+      'uint256', // 6
+      'uint256', // 7
+      'uint256', // 8
+      'uint256', // 9
+      'uint256', // 10
+      'uint256' // 11
     ]
   }
 
-  // Remove decode result parameter
-  const cleanListMethodsRates = listMethodsRates.map(x => [x[0], x[1]])
+  const [blockHeight_, returnDataRatesArray] = await multicall.tryBlockAndAggregate(false, listCallsRates)
+  console.log('🚀 ~ contractStatus ~ blockHeight:', blockHeight_)
 
-  const multicallResultRates = await multicall.methods.tryBlockAndAggregate(false, cleanListMethodsRates).call()
-
-  const listReturnDataRates = multicallResultRates[2].map((item, itemIndex) => web3.eth.abi.decodeParameter(listMethods[itemIndex][2], item.returnData))
+  const listReturnDataRates = returnDataRatesArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypesRates[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
 
   const commissionRates = {}
 
@@ -410,38 +496,84 @@ const contractStatus = async (web3, dContracts, configProject) => {
 
   dMocState.commissionRates = commissionRates
 
-  if (appProject === 'bnb') return dMocState  // need archive
+  // Early return if appProject is 'bnb'
+  if (appProject === 'bnb') return dMocState // need archive
 
   // Historics Price 24hs ago
-  const d24BlockHeights = dMocState.blockHeight - dMocState.dayBlockSpan;
-  // Remove decode result parameter
+  const d24BlockHeights = dMocState.blockHeight - dMocState.dayBlockSpan
+
+  let listCallsHistoric = []
+  let returnTypesHistoric = []
+
   if (appMode === 'MoC') {
-    listMethods = [
-      [mocstate.options.address, mocstate.methods.getBitcoinPrice().encodeABI(), 'uint256'], // 0
-      [mocstate.options.address, mocstate.methods.getMoCPrice().encodeABI(), 'uint256'], // 1
-      [mocstate.options.address, mocstate.methods.bproUsdPrice().encodeABI(), 'uint256'], // 2
-      [mocstate.options.address, mocstate.methods.bucketBProTecPrice(BUCKET_X2).encodeABI(), 'uint256'], // 3
+    listCallsHistoric = [
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getBitcoinPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bproUsdPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bucketBProTecPrice', [BUCKET_X2]) }
+    ]
+
+    returnTypesHistoric = [
+      'uint256', // bitcoinPrice
+      'uint256', // mocPrice
+      'uint256', // bproPriceInUsd
+      'uint256' // bprox2PriceInRbtc
     ]
   } else {
-    listMethods = [
-      [mocstate.options.address, mocstate.methods.getReserveTokenPrice().encodeABI(), 'uint256'], // 0
-      [mocstate.options.address, mocstate.methods.getMoCPrice().encodeABI(), 'uint256'], // 1
-      [mocstate.options.address, mocstate.methods.riskProUsdPrice().encodeABI(), 'uint256'], // 2
-      [mocstate.options.address, mocstate.methods.bucketRiskProTecPrice(BUCKET_X2).encodeABI(), 'uint256'], // 3
+    listCallsHistoric = [
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getReserveTokenPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('getMoCPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('riskProUsdPrice') },
+      { target: mocstate.address, callData: mocstate.interface.encodeFunctionData('bucketRiskProTecPrice', [BUCKET_X2]) }
+    ]
+
+    returnTypesHistoric = [
+      'uint256', // reserveTokenPrice
+      'uint256', // mocPrice
+      'uint256', // riskProUsdPrice
+      'uint256' // bucketRiskProTecPrice
     ]
   }
 
-  const cleanListMethodsHistoric = listMethods.map(x => [x[0], x[1]])
+  // Encode the Multicall function
+  const multicallInterface = multicall.interface
+  const multicallDataHistoric = multicallInterface.encodeFunctionData('tryBlockAndAggregate', [false, listCallsHistoric])
 
-  const multicallResultHistoric = await multicall.methods.tryBlockAndAggregate(false, cleanListMethodsHistoric).call({}, d24BlockHeights)
+  const provider = multicall.provider
 
-  const listReturnDataHistoric = multicallResultHistoric[2].map((item, itemIndex) => web3.eth.abi.decodeParameter(listMethods[itemIndex][2], item.returnData))
+  // Perform the call at the specific block
+  const rawResultHistoric = await provider.call({
+    to: multicall.address,
+    data: multicallDataHistoric
+  }, d24BlockHeights)
+
+  // Decode the result
+  const decodedResultHistoric = multicallInterface.decodeFunctionResult('tryBlockAndAggregate', rawResultHistoric)
+
+  const [blockHeightHistoric, returnDataHistoricArray] = decodedResultHistoric
+  console.log('🚀 ~ contractStatus ~ blockHeightHistoric:', blockHeightHistoric)
+
+  const listReturnDataHistoric = returnDataHistoricArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypesHistoric[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
 
   const historic = {}
-  historic.bitcoinPrice = listReturnDataHistoric[0]
-  historic.mocPrice = listReturnDataHistoric[1]
-  historic.bproPriceInUsd = listReturnDataHistoric[2]
-  historic.bprox2PriceInRbtc = listReturnDataHistoric[3]
+  if (appMode === 'MoC') {
+    historic.bitcoinPrice = listReturnDataHistoric[0]
+    historic.mocPrice = listReturnDataHistoric[1]
+    historic.bproPriceInUsd = listReturnDataHistoric[2]
+    historic.bprox2PriceInRbtc = listReturnDataHistoric[3]
+  } else {
+    historic.reserveTokenPrice = listReturnDataHistoric[0]
+    historic.mocPrice = listReturnDataHistoric[1]
+    historic.riskProUsdPrice = listReturnDataHistoric[2]
+    historic.bucketRiskProTecPrice = listReturnDataHistoric[3]
+  }
   historic.blockHeight = d24BlockHeights
 
   dMocState.historic = historic
@@ -449,7 +581,8 @@ const contractStatus = async (web3, dContracts, configProject) => {
   return dMocState
 }
 
-const userBalance = async (web3, dContracts, userAddress, configProject) => {
+// User Balance Function
+const userBalance = async (dContracts, userAddress, configProject) => {
   const appMode = configProject.appMode
 
   const multicall = dContracts.contracts.multicall
@@ -461,71 +594,95 @@ const userBalance = async (web3, dContracts, userAddress, configProject) => {
 
   console.log(`Reading user balance ... account: ${userAddress}`)
 
-  const listMethods = [
-    [tg.options.address, tg.methods.balanceOf(userAddress).encodeABI(), 'uint256'], // 0
-    [tg.options.address, tg.methods.allowance(userAddress, moc.options.address).encodeABI(), 'uint256'], // 1
-    [tp.options.address, tp.methods.balanceOf(userAddress).encodeABI(), 'uint256'], // 2
-    [tc.options.address, tc.methods.balanceOf(userAddress).encodeABI(), 'uint256'] // 3
+  const listCalls = [
+    { target: tg.address, callData: tg.interface.encodeFunctionData('balanceOf', [userAddress]) },
+    { target: tg.address, callData: tg.interface.encodeFunctionData('allowance', [userAddress, moc.address]) },
+    { target: tp.address, callData: tp.interface.encodeFunctionData('balanceOf', [userAddress]) },
+    { target: tc.address, callData: tc.interface.encodeFunctionData('balanceOf', [userAddress]) }
+  ]
+
+  const returnTypes = [
+    'uint256', // 0
+    'uint256', // 1
+    'uint256', // 2
+    'uint256' // 3
   ]
 
   if (appMode === 'MoC') {
-    listMethods.push([multicall.options.address, multicall.methods.getEthBalance(userAddress).encodeABI(), 'uint256']) // 4
-    listMethods.push([moc.options.address, moc.methods.docAmountToRedeem(userAddress).encodeABI(), 'uint256']) // 5
-    listMethods.push([moc.options.address, moc.methods.bproxBalanceOf(BUCKET_X2, userAddress).encodeABI(), 'uint256']) // 6
-    listMethods.push([multicall.options.address, multicall.methods.getEthBalance(userAddress).encodeABI(), 'uint256']) // 7
+    listCalls.push({ target: multicall.address, callData: multicall.interface.encodeFunctionData('getEthBalance', [userAddress]) })
+    listCalls.push({ target: moc.address, callData: moc.interface.encodeFunctionData('docAmountToRedeem', [userAddress]) })
+    listCalls.push({ target: moc.address, callData: moc.interface.encodeFunctionData('bproxBalanceOf', [BUCKET_X2, userAddress]) })
+    listCalls.push({ target: multicall.address, callData: multicall.interface.encodeFunctionData('getEthBalance', [userAddress]) })
+    returnTypes.push('uint256') // 4
+    returnTypes.push('uint256') // 5
+    returnTypes.push('uint256') // 6
+    returnTypes.push('uint256') // 7
   } else {
     const reservetoken = dContracts.contracts.reservetoken
-    listMethods.push([reservetoken.options.address, reservetoken.methods.balanceOf(userAddress).encodeABI(), 'uint256']) // 4
-    listMethods.push([moc.options.address, moc.methods.stableTokenAmountToRedeem(userAddress).encodeABI(), 'uint256']) // 5
-    listMethods.push([moc.options.address, moc.methods.riskProxBalanceOf(BUCKET_X2, userAddress).encodeABI(), 'uint256']) // 6
-    listMethods.push([reservetoken.options.address, reservetoken.methods.allowance(userAddress, dContracts.contracts.moc._address).encodeABI(), 'uint256']) // 7
+    listCalls.push({ target: reservetoken.address, callData: reservetoken.interface.encodeFunctionData('balanceOf', [userAddress]) })
+    listCalls.push({ target: moc.address, callData: moc.interface.encodeFunctionData('stableTokenAmountToRedeem', [userAddress]) })
+    listCalls.push({ target: moc.address, callData: moc.interface.encodeFunctionData('riskProxBalanceOf', [BUCKET_X2, userAddress]) })
+    listCalls.push({ target: reservetoken.address, callData: reservetoken.interface.encodeFunctionData('allowance', [userAddress, moc.address]) })
+    returnTypes.push('uint256') // 4
+    returnTypes.push('uint256') // 5
+    returnTypes.push('uint256') // 6
+    returnTypes.push('uint256') // 7
   }
 
   // Token migrator
   if (dContracts.contracts.tp_legacy) {
     const tpLegacy = dContracts.contracts.tp_legacy
     const tokenMigrator = dContracts.contracts.token_migrator
-    listMethods.push([tpLegacy.options.address, tpLegacy.methods.balanceOf(userAddress).encodeABI(), 'uint256']) // 8
-    listMethods.push([tpLegacy.options.address, tpLegacy.methods.allowance(userAddress, tokenMigrator.options.address).encodeABI(), 'uint256']) // 9
+    listCalls.push({ target: tpLegacy.address, callData: tpLegacy.interface.encodeFunctionData('balanceOf', [userAddress]) })
+    listCalls.push({ target: tpLegacy.address, callData: tpLegacy.interface.encodeFunctionData('allowance', [userAddress, tokenMigrator.address]) })
+    returnTypes.push('uint256') // 8
+    returnTypes.push('uint256') // 9
   }
 
-  // Remove decode result parameter
-  const cleanListMethods = listMethods.map(x => [x[0], x[1]])
-  const multicallResult = await multicall.methods.tryBlockAndAggregate(false, cleanListMethods).call()
-  const listReturnData = multicallResult[2].map((item, itemIndex) => web3.eth.abi.decodeParameter(listMethods[itemIndex][2], item.returnData))
+  const [blockHeight, returnDataArray] = await multicall.tryBlockAndAggregate(false, listCalls)
 
-  const userBalance = {}
-  userBalance.blockHeight = multicallResult[0]
-  userBalance.mocBalance = listReturnData[0]
-  userBalance.mocAllowance = listReturnData[1]
-  userBalance.docBalance = listReturnData[2]
-  userBalance.bproBalance = listReturnData[3]
-  userBalance.rbtcBalance = listReturnData[4]
-  userBalance.docToRedeem = listReturnData[5]
-  userBalance.bprox2Balance = listReturnData[6]
-  userBalance.spendableBalance = listReturnData[4]
-  userBalance.reserveAllowance = listReturnData[7]
+  const listReturnData = returnDataArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypes[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
+
+  const userBalanceObj = {}
+  userBalanceObj.blockHeight = blockHeight
+  userBalanceObj.mocBalance = listReturnData[0]
+  userBalanceObj.mocAllowance = listReturnData[1]
+  userBalanceObj.docBalance = listReturnData[2]
+  userBalanceObj.bproBalance = listReturnData[3]
+  userBalanceObj.rbtcBalance = listReturnData[4]
+  userBalanceObj.docToRedeem = listReturnData[5]
+  userBalanceObj.bprox2Balance = listReturnData[6]
+  userBalanceObj.spendableBalance = listReturnData[4]
+  userBalanceObj.reserveAllowance = listReturnData[7]
 
   if (dContracts.contracts.tp_legacy) {
-    userBalance.tpLegacyBalance = listReturnData[8]
-    userBalance.tpLegacyAllowance = listReturnData[9]
+    userBalanceObj.tpLegacyBalance = listReturnData[8]
+    userBalanceObj.tpLegacyAllowance = listReturnData[9]
   }
 
-  userBalance.potentialBprox2MaxInterest = '0'
-  userBalance.bProHoldIncentive = '0'
-  userBalance.estimateGasMintBpro = '2000000'
-  userBalance.estimateGasMintDoc = '2000000'
-  userBalance.estimateGasMintBprox2 = '2000000'
-  userBalance.userAddress = userAddress
+  userBalanceObj.potentialBprox2MaxInterest = '0'
+  userBalanceObj.bProHoldIncentive = '0'
+  userBalanceObj.estimateGasMintBpro = '2000000'
+  userBalanceObj.estimateGasMintDoc = '2000000'
+  userBalanceObj.estimateGasMintBprox2 = '2000000'
+  userBalanceObj.userAddress = userAddress
 
-  const calcMintInterest = await mocinrate.methods.calcMintInterestValues(BUCKET_X2, userBalance.rbtcBalance).call()
+  // Calculate potentialBprox2MaxInterest
+  const calcMintInterest = await mocinrate.calcMintInterestValues(BUCKET_X2, userBalanceObj.rbtcBalance)
+  userBalanceObj.potentialBprox2MaxInterest = calcMintInterest.toString()
 
-  userBalance.potentialBprox2MaxInterest = calcMintInterest
-
-  return userBalance
+  return userBalanceObj
 }
 
-const calcCommission = async (web3, dContracts, dataContractStatus, reserveAmount, token, action) => {
+// Calculate Commission Function
+const calcCommission = async (dContracts, dataContractStatus, reserveAmount, token, action) => {
   const vendorAddress = `${process.env.VENDOR_ADDRESS}`.toLowerCase()
 
   const multicall = dContracts.contracts.multicall
@@ -588,25 +745,35 @@ const calcCommission = async (web3, dContracts, dataContractStatus, reserveAmoun
         mocType = dataContractStatus.commissionRatesTypes.REDEEM_RISKPROX_FEES_MOC
       }
       break
+    default:
+      throw new Error(`Unsupported token type: ${token}`)
   }
 
-  // Calculate commission with multicall
-  const listMethods = [
-    [mocinrate.options.address, mocinrate.methods.calcCommissionValue(toContractPrecision(reserveAmount), reserveType).encodeABI(), 'uint256'], // 0
-    [mocinrate.options.address, mocinrate.methods.calcCommissionValue(toContractPrecision(reserveAmount), mocType).encodeABI(), 'uint256'], // 1
-    [mocinrate.options.address, mocinrate.methods.calculateVendorMarkup(vendorAddress, toContractPrecision(reserveAmount)).encodeABI(), 'uint256'] // 2
+  // Prepare Multicall for Commission Calculation
+  const listCalls = [
+    { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('calcCommissionValue', [toContractPrecision(reserveAmount), reserveType]) },
+    { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('calcCommissionValue', [toContractPrecision(reserveAmount), mocType]) },
+    { target: mocinrate.address, callData: mocinrate.interface.encodeFunctionData('calculateVendorMarkup', [vendorAddress, toContractPrecision(reserveAmount)]) }
   ]
 
-  // Remove decode result parameter
-  const cleanListMethods = listMethods.map(x => [x[0], x[1]])
+  const returnTypes = [
+    'uint256', // commission_reserve
+    'uint256', // commission_moc
+    'uint256' // vendorMarkup
+  ]
 
-  // Multicall results
-  const multicallResult = await multicall.methods.tryBlockAndAggregate(false, cleanListMethods).call()
+  const [blockHeight, returnDataArray] = await multicall.tryBlockAndAggregate(false, listCalls)
+  console.log('🚀 ~ calcCommission ~ blockHeight:', blockHeight)
 
-  // Decode multicall
-  const listReturnData = multicallResult[2].map((item, itemIndex) => web3.eth.abi.decodeParameter(listMethods[itemIndex][2], item.returnData))
+  const listReturnData = returnDataArray.map((callResult, index) => {
+    if (callResult.success) {
+      return ethers.utils.defaultAbiCoder.decode([returnTypes[index]], callResult.returnData)[0]
+    } else {
+      // Handle failed call, e.g., return null or throw an error
+      return null
+    }
+  })
 
-  // Dictionary commissions
   const commission = {}
   commission.commission_reserve = listReturnData[0]
   commission.commission_moc = listReturnData[1]

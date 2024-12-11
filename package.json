@@ -24,7 +24,7 @@
     "abi-decoder": "^2.4.0",
     "bignumber.js": "^9.0.2",
     "dotenv": "^16.0.0",
-    "web3": "^1.7.3"
+    "ethers": "^5.7.2"
   },
   "devDependencies": {
     "eslint": "^8.16.0",

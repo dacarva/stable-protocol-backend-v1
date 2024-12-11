@@ -1,5 +1,5 @@
-import BigNumber from 'bignumber.js'
-import Web3 from 'web3'
+import { BigNumber } from 'bignumber.js'
+import { ethers } from 'ethers'
 import fs from 'fs'
 
 BigNumber.config({
@@ -11,9 +11,7 @@ const BUCKET_X2 = '0x58320000000000000000000000000000000000000000000000000000000
 const BUCKET_C0 = '0x4330000000000000000000000000000000000000000000000000000000000000'
 
 const readJsonFile = (path) => {
-  //console.log('Read json path: ', path)
   let config
-
   if (fs.existsSync(path)) {
     const rawdata = fs.readFileSync(path)
     config = JSON.parse(rawdata)
@@ -23,23 +21,21 @@ const readJsonFile = (path) => {
   return config
 }
 
-const getWeb3 = (hostUri) => {
-  const web3 = new Web3(hostUri)
-  return web3
+const getProvider = (hostUri) => {
+  return new ethers.providers.JsonRpcProvider(hostUri)
 }
 
-const getGasPrice = async (web3) => {
+const getGasPrice = async (provider) => {
   try {
-    const gasPrice = await web3.eth.getGasPrice()
-    //gasPrice = web3.utils.fromWei(gasPrice);
-    return gasPrice
+    const gasPrice = await provider.getGasPrice()
+    return gasPrice.toString()
   } catch (e) {
     console.log(e)
   }
 }
 
 const toContractPrecision = (amount) => {
-  return Web3.utils.toWei(amount.toFormat(18, BigNumber.ROUND_DOWN), 'ether')
+  return ethers.utils.parseEther(amount.toFormat(18, BigNumber.ROUND_DOWN))
 }
 
 const precision = (contractDecimals) => new BigNumber(10).exponentiatedBy(contractDecimals)
@@ -49,16 +45,19 @@ const fromContractPrecisionDecimals = (amount, decimals) => {
 }
 
 const toContractPrecisionDecimals = (amount, decimals) => {
-  const result = new BigNumber(amount.toFormat(decimals, BigNumber.ROUND_DOWN)).times(precision(decimals)).toFixed(0)
+  const result = new BigNumber(amount.toFormat(decimals, BigNumber.ROUND_DOWN))
+    .times(precision(decimals))
+    .toFixed(0)
   return result
 }
 
-
 const formatVisibleValue = (amount, decimals) => {
-  return BigNumber(amount).div(precision(18)).toFormat(decimals, BigNumber.ROUND_UP, {
-    decimalSeparator: '.',
-    groupSeparator: ','
-  })
+  return BigNumber(amount)
+    .div(precision(18))
+    .toFormat(decimals, BigNumber.ROUND_UP, {
+      decimalSeparator: '.',
+      groupSeparator: ','
+    })
 }
 
 const formatTimestamp = (timestamp) => {
@@ -74,7 +73,7 @@ const formatTimestamp = (timestamp) => {
 
 export {
   readJsonFile,
-  getWeb3,
+  getProvider,
   getGasPrice,
   toContractPrecision,
   formatVisibleValue,
